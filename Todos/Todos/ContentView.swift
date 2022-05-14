@@ -14,29 +14,55 @@ struct Todo: Identifiable, Equatable {
   var isComplete = false
 }
 
+enum TodoAction {
+  case checkboxTapped
+  case textFieldchanged(String)
+}
+
+struct TodoEnvironment {
+
+}
+
+let todoReducer = Reducer<Todo, TodoAction, TodoEnvironment> { state, action, environment in
+  switch action {
+  case .checkboxTapped:
+    state.isComplete.toggle()
+    return .none
+  case let .textFieldchanged(text):
+    state.description = text
+    return .none
+  }
+}
+
 struct AppState: Equatable {
   var todos: [Todo]
 }
 
 enum AppAction {
-  case todoCheckboxTapped(index: Int)
-  case todoTextFieldChanged(index: Int, text: String)
+  case addButtonTapped
+  case todo(index: Int, action: TodoAction)
 }
 
 struct AppEnvironment {
 
 }
 
-let appReducer = Reducer<AppState, AppAction, AppEnvironment> { state, action, environment in
-  switch action {
-  case let .todoCheckboxTapped(index):
-    state.todos[index].isComplete.toggle()
-    return .none
-  case let .todoTextFieldChanged(index, text):
-    state.todos[index].description = text
-    return .none
+let appReducer = Reducer<AppState, AppAction, AppEnvironment>.combine(
+  todoReducer.forEach(
+    state: \AppState.todos,
+    action: /AppAction.todo(index:action:),
+    environment: { _ in TodoEnvironment() }
+  ),
+  Reducer { state, action, environment in
+    switch action {
+    case .addButtonTapped:
+      state.todos.insert(Todo(id: UUID()), at: 0)
+      return .none
+    case .todo:
+      return .none
+    }
   }
-}.debug()
+)
 
 struct ContentView: View {
   let store: Store<AppState, AppAction>
@@ -45,28 +71,42 @@ struct ContentView: View {
     NavigationView {
       WithViewStore(store) { viewStore in
         List {
-          ForEach(Array(viewStore.todos.enumerated()), id: \.element.id) { index, todo in
-            HStack {
-              Button(action: {
-                viewStore.send(.todoCheckboxTapped(index: index))
-              }) {
-                Image(systemName: todo.isComplete ? "checkmark.square" : "square")
-              }
-              .buttonStyle(PlainButtonStyle())
-
-              TextField(
-                "Unititled todo",
-                text: viewStore.binding(
-                  get: { $0.todos[index].description },
-                  send: { .todoTextFieldChanged(index: index, text: $0) }
-                )
-              )
-            }
-            .foregroundColor(todo.isComplete ? .gray : nil)
-          }
+          ForEachStore(
+            store.scope(state: \.todos, action: AppAction.todo(index:action:)),
+            content: TodoView.init(store:)
+          )
         }
+        .navigationTitle("Todos")
+        .navigationBarItems(trailing: Button("Add") {
+          viewStore.send(.addButtonTapped, animation: .default)
+        })
       }
-      .navigationTitle("Todos")
+    }
+  }
+}
+
+struct TodoView: View {
+  let store: Store<Todo, TodoAction>
+
+  var body: some View {
+    WithViewStore(store) { viewStore in
+      HStack {
+        Button(action: {
+          viewStore.send(.checkboxTapped)
+        }) {
+          Image(systemName: viewStore.isComplete ? "checkmark.square" : "square")
+        }
+        .buttonStyle(PlainButtonStyle())
+
+        TextField(
+          "Unititled todo",
+          text: viewStore.binding(
+            get: \.description,
+            send: TodoAction.textFieldchanged
+          )
+        )
+      }
+      .foregroundColor(viewStore.isComplete ? .gray : nil)
     }
   }
 }
