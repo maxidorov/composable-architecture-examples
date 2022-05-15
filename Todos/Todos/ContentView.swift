@@ -14,21 +14,19 @@ struct Todo: Identifiable, Equatable {
   var isComplete = false
 }
 
-enum TodoAction {
+enum TodoAction: Equatable {
   case checkboxTapped
-  case textFieldchanged(String)
+  case textFieldChanged(String)
 }
 
-struct TodoEnvironment {
-
-}
+struct TodoEnvironment { }
 
 let todoReducer = Reducer<Todo, TodoAction, TodoEnvironment> { state, action, environment in
   switch action {
   case .checkboxTapped:
     state.isComplete.toggle()
     return .none
-  case let .textFieldchanged(text):
+  case let .textFieldChanged(text):
     state.description = text
     return .none
   }
@@ -36,15 +34,24 @@ let todoReducer = Reducer<Todo, TodoAction, TodoEnvironment> { state, action, en
 
 struct AppState: Equatable {
   var todos: [Todo]
+
+  init() {
+    self.init(todos: [])
+  }
+
+  init(todos: [Todo]) {
+    self.todos = todos
+  }
 }
 
-enum AppAction {
+enum AppAction: Equatable {
   case addButtonTapped
   case todo(index: Int, action: TodoAction)
+  case todoDelayCompleted
 }
 
 struct AppEnvironment {
-
+  var uuid: () -> UUID
 }
 
 let appReducer = Reducer<AppState, AppAction, AppEnvironment>.combine(
@@ -56,9 +63,29 @@ let appReducer = Reducer<AppState, AppAction, AppEnvironment>.combine(
   Reducer { state, action, environment in
     switch action {
     case .addButtonTapped:
-      state.todos.insert(Todo(id: UUID()), at: 0)
+      state.todos.insert(Todo(id: environment.uuid()), at: 0)
       return .none
+
+    case .todo(_, action: .checkboxTapped):
+      struct CancelDelayId: Hashable {}
+
+      return Effect(value: AppAction.todoDelayCompleted)
+        .delay(for: 1, scheduler: DispatchQueue.main)
+        .eraseToEffect()
+        .cancellable(id: CancelDelayId(), cancelInFlight: true)
+
     case .todo:
+      return .none
+
+    case .todoDelayCompleted:
+      state.todos = state.todos
+        .enumerated()
+        .sorted { lhs, rhs in
+          !lhs.element.isComplete && rhs.element.isComplete
+          || lhs.offset < rhs.offset
+        }
+        .map(\.element)
+
       return .none
     }
   }
@@ -92,7 +119,7 @@ struct TodoView: View {
     WithViewStore(store) { viewStore in
       HStack {
         Button(action: {
-          viewStore.send(.checkboxTapped)
+          viewStore.send(.checkboxTapped, animation: .default)
         }) {
           Image(systemName: viewStore.isComplete ? "checkmark.square" : "square")
         }
@@ -102,7 +129,7 @@ struct TodoView: View {
           "Unititled todo",
           text: viewStore.binding(
             get: \.description,
-            send: TodoAction.textFieldchanged
+            send: TodoAction.textFieldChanged
           )
         )
       }
@@ -117,7 +144,9 @@ struct ContentView_Previews: PreviewProvider {
       store: Store(
         initialState: AppState(todos: todos),
         reducer: appReducer,
-        environment: AppEnvironment()
+        environment: AppEnvironment(
+          uuid: UUID.init
+        )
       )
     )
   }

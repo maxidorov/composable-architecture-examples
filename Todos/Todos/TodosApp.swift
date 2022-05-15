@@ -16,7 +16,9 @@ struct TodosApp: App {
         store: Store(
           initialState: AppState(todos: todos),
           reducer: appReducer,
-          environment: AppEnvironment()
+          environment: AppEnvironment(
+            uuid: UUID.init
+          )
         )
       )
     }
